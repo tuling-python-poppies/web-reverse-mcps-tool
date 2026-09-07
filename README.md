@@ -44,6 +44,8 @@ pip install -e C:\path\to\web-reverse-mcps-tool\Camoufox\camoufox-reverse-mcp
 
 ### 浏览器二进制
 
+下载地址：<https://github.com/WhiteNightShadow/camoufox-reverse/releases>（本仓库附带的 `Camoufox\camoufox.exe` 即来自该发行版）
+
 本机路径：`Camoufox\camoufox.exe`（或另装，通过 `CAMOUFOX_EXECUTABLE_PATH` 指定）。启动 MCP 前需设置环境变量（仓库内的 `launch.bat` 已封装好，直接作为启动命令使用即可）：
 
 ```
@@ -86,6 +88,7 @@ npm run build          # 产物: node build/src/index.js
 
 - 默认：Patchright（随依赖安装，本机 Chrome/Chromium）
 - Cloak：`--cloak` 首次使用自动下载（约 200MB），或 `--cloakBinaryPath D:\path\to\CloakBrowser\chrome.exe` 指向本机二进制（本仓库预留的 CloakBrowser 目录即为此用途）
+- CloakBrowser 发行版下载：<https://github.com/CloakHQ/CloakBrowser/releases>
 
 ### 手动验证
 

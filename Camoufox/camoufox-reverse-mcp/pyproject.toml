@@ -1,0 +1,35 @@
+[project]
+name = "camoufox-reverse-mcp"
+version = "1.2.0"
+description = "Anti-detection browser MCP server for JavaScript reverse engineering"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "mcp>=1.0.0",
+    "camoufox[geoip]>=0.4.0",
+    "playwright>=1.40.0",
+    "esprima>=4.0.1",
+]
+
+[project.scripts]
+camoufox-reverse-mcp = "camoufox_reverse_mcp.__main__:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "camoufox_reverse_mcp",
+    "camoufox_reverse_mcp.hooks",
+    "camoufox_reverse_mcp.tools",
+    "camoufox_reverse_mcp.utils",
+]
+package-dir = {camoufox_reverse_mcp = "src"}
+include-package-data = true
+
+[tool.setuptools.package-data]
+camoufox_reverse_mcp = ["hooks/*.js"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

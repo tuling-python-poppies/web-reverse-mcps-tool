@@ -1,0 +1,321 @@
+from __future__ import annotations
+import json
+from ..network_capture import NetworkCaptureService
+
+async def break_on_xhr(network_capture: NetworkCaptureService, url: str) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+    
+    try:
+        await collector.set_xhr_breakpoint(url)
+        return f"✅ XHR breakpoint set for URLs containing: '{url}'\nDebugger will pause when a matching XHR/Fetch request is made."
+    except Exception as e:
+        return f"Error: {e}"
+
+async def remove_breakpoints(
+    network_capture: NetworkCaptureService,
+    breakpoint_id: str | None = None,
+    xhr_url: str | None = None,
+    clear_all: bool = False
+) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+    
+    if clear_all:
+        try:
+            await collector.clear_all_breakpoints()
+            return "✅ All breakpoints (both code and XHR) have been removed. NOTE: If execution is currently paused, you still need to call resume_execution to continue."
+        except Exception as e:
+            return f"Error clearing all breakpoints: {e}"
+            
+    results = []
+    if breakpoint_id:
+        try:
+            await collector.remove_breakpoint(breakpoint_id)
+            results.append(f"✅ Code breakpoint {breakpoint_id} removed.")
+        except Exception as e:
+            results.append(f"Error removing code breakpoint: {e}")
+            
+    if xhr_url:
+        try:
+            await collector.remove_xhr_breakpoint(xhr_url)
+            results.append(f"✅ XHR breakpoint for '{xhr_url}' removed.")
+        except Exception as e:
+            results.append(f"Error removing XHR breakpoint: {e}")
+            
+    if not results:
+        return "⚠️ No action taken. Provide breakpoint_id, xhr_url, or set clear_all=True."
+        
+    results.append("NOTE: If execution is currently paused, you still need to call resume_execution to continue.")
+    return "\n".join(results)
+
+
+async def resume_execution(network_capture: NetworkCaptureService) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+    
+    try:
+        if collector.paused_state.is_paused:
+            await collector.resume()
+            return "▶️ Execution resumed."
+        else:
+            return "⚠️ Execution is already running (not paused)."
+    except Exception as e:
+        return f"Error: {e}"
+
+async def get_paused_info(
+    network_capture: NetworkCaptureService,
+    include_scopes: bool = True,
+    max_scope_depth: int = 2,
+    frame_index: int = 0
+) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+    
+    state = collector.paused_state
+    if not state.is_paused:
+        return "Execution is not paused.\nSet a breakpoint and trigger it to pause execution."
+        
+    md = ["🔴 Execution Paused\n"]
+    if state.reason:
+        md.append(f"Reason: {state.reason}")
+    if state.hit_breakpoints:
+        md.append(f"Hit breakpoints: {', '.join(state.hit_breakpoints)}")
+        
+    md.append("\n📍 Call Stack:")
+    
+    for i, frame in enumerate(state.call_frames):
+        location = frame.get("location", {})
+        script_id = location.get("scriptId")
+        script = collector.scripts.get(script_id) if script_id else None
+        
+        url = (script.url if script else frame.get("url")) or f"script:{script_id}"
+        line_num = location.get("lineNumber", 0) + 1
+        col_num = location.get("columnNumber", 0) + 1
+        
+        md.append(f"  {i}. {frame.get('functionName')} @ {url}:{line_num}:{col_num}")
+        
+    if include_scopes and state.call_frames:
+        if frame_index < 0 or frame_index >= len(state.call_frames):
+            md.append(f"\n⚠️ frame_index {frame_index} is out of range (0-{len(state.call_frames) - 1}).")
+        else:
+            selected_frame = state.call_frames[frame_index]
+            md.append(f"\n🔍 Scope Variables (frame {frame_index}: {selected_frame.get('functionName') or '<anonymous>'}):")
+            
+            scope_priority = {"local": 1, "closure": 2}
+            scope_count = 0
+            
+            for scope in selected_frame.get("scopeChain", []):
+                scope_type = scope.get("type")
+                if scope_type == "global":
+                    continue
+                    
+                priority = scope_priority.get(scope_type, 3)
+                if priority > max_scope_depth:
+                    continue
+                    
+                scope_count += 1
+                scope_name = scope.get("name") or scope_type
+                md.append(f"\n  [{scope_name}]:")
+                
+                obj = scope.get("object", {})
+                object_id = obj.get("objectId")
+                
+                if object_id:
+                    try:
+                        variables = await collector.get_scope_variables(object_id)
+                        if not variables:
+                            md.append("    (empty)")
+                        else:
+                            for var in variables[:20]:
+                                val = var.get("value")
+                                val_str = f'"{val}"' if isinstance(val, str) else json.dumps(val, ensure_ascii=False)
+                                if val_str and len(val_str) > 200:
+                                    val_str = val_str[:200] + "...(truncated)"
+                                md.append(f"    {var.get('name')}: {val_str}")
+                                
+                            if len(variables) > 20:
+                                md.append(f"    ... and {len(variables) - 20} more")
+                    except Exception:
+                        md.append("    (unable to retrieve variables)")
+                        
+            if scope_count == 0:
+                md.append("    (no matching scopes — try increasing max_scope_depth)")
+                
+    md.append("\n💡 Use resume_execution to continue execution.")
+    return "\n".join(md)
+
+
+async def set_breakpoint_on_text(
+    network_capture: NetworkCaptureService,
+    text: str,
+    case_sensitive: bool = True,
+    condition: str | None = None
+) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+        
+    try:
+        matches = await collector.search_in_scripts(
+            query=text, case_sensitive=case_sensitive, is_regex=False
+        )
+    except Exception as e:
+        return f"Error searching for text: {e}"
+        
+    if not matches:
+        return f"Could not find text '{text}' in any loaded scripts."
+        
+    if len(matches) > 10:
+        return f"Found too many matches ({len(matches)}) for '{text}'. Please provide a more specific string."
+
+    # Only set breakpoint on the FIRST match to avoid flooding
+    match = matches[0]
+    try:
+        source_result = await collector.get_script_source(match["scriptId"])
+        source = source_result.get("scriptSource", "")
+        lines = source.split("\n")
+        
+        col = 0
+        if match["lineNumber"] < len(lines):
+            line_content = lines[match["lineNumber"]]
+            col_pos = line_content.find(text)
+            if col_pos >= 0:
+                col = col_pos
+            
+        bp = await collector.set_breakpoint(
+            url=match["url"],
+            line_number=match["lineNumber"],
+            column_number=col,
+            condition=condition
+        )
+        result = f"✅ Breakpoint set at {match['url']}:{match['lineNumber']+1}:{col} (ID: {bp.breakpoint_id})"
+    except Exception as e:
+        result = f"❌ Failed to set breakpoint at {match['url']}:{match['lineNumber']+1} - {e}"
+
+    # If there were multiple matches, inform the user about the others
+    if len(matches) > 1:
+        result += f"\n\n⚠️ Found {len(matches)} matches total. Breakpoint set only on the first match."
+        result += "\nOther locations:"
+        for i, m in enumerate(matches[1:], start=2):
+            line_preview = m.get("lineContent", "").strip()[:80]
+            result += f"\n  {i}. {m['url']}:{m['lineNumber']+1}  {line_preview}"
+        result += "\n\nTo target a different location, use a more specific search text."
+
+    return result
+
+
+async def list_breakpoints(network_capture: NetworkCaptureService) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+        
+    md = ["### XHR Breakpoints"]
+    if not collector.xhr_breakpoints:
+        md.append("No XHR breakpoints set.")
+    else:
+        for url in collector.xhr_breakpoints:
+            md.append(f"- URL contains: '{url}'")
+            
+    md.append("\n### Code Breakpoints")
+    if not collector.breakpoints:
+        md.append("No code breakpoints set.")
+    else:
+        for bp_id, bp in collector.breakpoints.items():
+            cond_str = f" (Condition: {bp.condition})" if bp.condition else ""
+            md.append(f"- {bp.url}:{bp.line_number + 1} [ID: {bp_id}]{cond_str}")
+
+    md.append("\n### Event Listener Breakpoints")
+    event_bps = getattr(collector, "event_listener_breakpoints", set())
+    if not event_bps:
+        md.append("No event listener breakpoints set.")
+    else:
+        for event_name, target_name in sorted(event_bps):
+            md.append(f"- {event_name} on {target_name}")
+             
+    return "\n".join(md)
+
+
+async def set_event_listener_breakpoint(
+    network_capture: NetworkCaptureService,
+    event_name: str,
+    target_name: str | None = None,
+) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+    try:
+        await collector.set_event_listener_breakpoint(event_name, target_name)
+        target = target_name or "*"
+        return f"✅ Event listener breakpoint set: {event_name} on {target}. Trigger the event, then call get_paused_info()."
+    except Exception as e:
+        return f"Error setting event listener breakpoint: {e}"
+
+
+async def remove_event_listener_breakpoint(
+    network_capture: NetworkCaptureService,
+    event_name: str,
+    target_name: str | None = None,
+) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+    try:
+        await collector.remove_event_listener_breakpoint(event_name, target_name)
+        target = target_name or "*"
+        return f"✅ Event listener breakpoint removed: {event_name} on {target}."
+    except Exception as e:
+        return f"Error removing event listener breakpoint: {e}"
+
+
+async def step(network_capture: NetworkCaptureService, action: str) -> str:
+    await network_capture.ensure_monitoring()
+    collector = network_capture.collector
+    if not collector:
+        return "Debugger not connected."
+        
+    if not collector.paused_state.is_paused:
+        return "Execution is not paused."
+        
+    try:
+        if action == "over":
+            await collector.step_over()
+        elif action == "into":
+            await collector.step_into()
+        elif action == "out":
+            await collector.step_out()
+        else:
+            return f"Invalid step action: {action}. Use 'over', 'into', or 'out'."
+
+        # Wait for execution to pause again (up to 5s)
+        paused = await collector.wait_for_pause(timeout=5.0)
+        if paused:
+            # Return brief location info
+            state = collector.paused_state
+            if state.call_frames:
+                frame = state.call_frames[0]
+                loc = frame.get("location", {})
+                script_id = loc.get("scriptId")
+                script = collector.scripts.get(script_id) if script_id else None
+                url = (script.url if script else frame.get("url")) or f"script:{script_id}"
+                line = loc.get("lineNumber", 0) + 1
+                col = loc.get("columnNumber", 0) + 1
+                func_name = frame.get("functionName") or "<anonymous>"
+                return f"⏸️ Paused after step {action} at {func_name} @ {url}:{line}:{col}\nUse get_paused_info for full scope details."
+            return f"⏸️ Paused after step {action}. Use get_paused_info to inspect state."
+        else:
+            return f"⏭️ Step {action} executed. Execution did not pause within 5s (might have resumed freely). Use get_paused_info to check state."
+    except Exception as e:
+        return f"Error stepping: {e}"

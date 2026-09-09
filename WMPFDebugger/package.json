@@ -4,6 +4,9 @@
   "main": "src/index.ts",
   "license": "GPL-2.0-only",
   "author": "evi0s",
+  "scripts": {
+    "update:addresses": "python tools/update_addresses.py --write"
+  },
   "dependencies": {
     "frida": "^17.3.2",
     "protobufjs": "^7.5.4",

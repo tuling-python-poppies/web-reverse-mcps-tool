@@ -90,6 +90,37 @@ yarn
 npx ts-node src/index.ts
 ```
 
+## 自动更新 WMPF 地址
+
+微信或 WMPF 更新后，可以使用本地安装包中的 `flue.dll` 自动生成地址配置，不需要从其他网站下载地址文件。
+
+先安装扫描器依赖：
+
+```bash
+python -m pip install -r tools/requirements.txt
+```
+
+然后运行：
+
+```bash
+yarn update:addresses
+```
+
+扫描器会自动查找 `%APPDATA%\Tencent\xwechat\xplugin\Plugins\RadiumWMPF` 下最新的运行时，分析 `flue.dll`（旧版本使用 `WeChatAppEx.exe`），并写入：
+
+```text
+frida/config/addresses.<WMPF版本>.json
+```
+
+也可以只分析不写文件，或指定版本：
+
+```bash
+python tools/update_addresses.py
+python tools/update_addresses.py --version 25558 --write
+```
+
+扫描器无法唯一确认函数时会停止并输出候选，不会静默生成可能导致微信崩溃的地址文件。地址文件已存在且内容未变化时，重复执行不会报错；确实需要覆盖时再使用 `--force`。
+
 > 注意: 在这个步骤之后，你需要先启动小程序（第三步），再打开开发者工具（第四步）。如果操作顺序反了你可能需要从重新第二步开始
 
 **第 3 步** 打开任意你想调试的小程序

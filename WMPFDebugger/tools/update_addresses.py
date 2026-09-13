@@ -60,18 +60,22 @@ OLD_VERSION_BOUNDARY = 13331
 
 XREF_RE = re.compile(rb"[\x40-\x4f][\x8d\x8b\x89\x8a][\x05\x0d\x15\x1d\x25\x2d\x35\x3d]")
 
-# The 25558 OnLoadStart body starts with this stable logging/dispatch shape.
-# RIP displacements and source line immediates are intentionally wildcarded.
+# The real AppletIndexContainer::OnLoadStart keeps the debug flag (dl) in the
+# prologue and later branches on it to drive the devtools socket.  RIP
+# displacements and source line immediates are intentionally wildcarded.
 LOADSTART_SIGNATURE = [
+    ("push", r"r15"),
+    ("push", r"r14"),
     ("push", r"rsi"),
     ("push", r"rdi"),
     ("push", r"rbx"),
     ("sub", r"rsp, 0x[0-9a-f]+"),
+    ("mov", r"ebx, edx"),
+    ("mov", r"rsi, rcx"),
     ("cmp", r"dword ptr \[rip \+ 0x[0-9a-f]+\], 2"),
     ("jg", r"0x[0-9a-f]+"),
     ("cmp", r"qword ptr \[rip \+ 0x[0-9a-f]+\], 0"),
     ("je", r"0x[0-9a-f]+"),
-    ("mov", r"rdi, rcx"),
     ("lea", r"rdx, \[rip \+ 0x[0-9a-f]+\]"),
     ("lea", r"rcx, \[rsp \+ 0x[0-9a-f]+\]"),
     ("mov", r"r8d, 0x[0-9a-f]+"),
@@ -81,8 +85,8 @@ LOADSTART_SIGNATURE = [
     ("lea", r"rdx, \[rip \+ 0x[0-9a-f]+\]"),
     ("mov", r"r8d, 1"),
     ("call", r"0x[0-9a-f]+"),
-    ("mov", r"rsi, rax"),
-    ("mov", r"rax, qword ptr \[rdi \+ 0x40\]"),
+    ("mov", r"rdi, rax"),
+    ("mov", r"rax, qword ptr \[rsi \+ 0x40\]"),
     ("cmp", r"byte ptr \[rax \+ 0xaf\], 0"),
     ("js", r"0x[0-9a-f]+"),
     ("add", r"rax, 0x98"),
@@ -226,7 +230,7 @@ def find_loadstart_by_signature(pe: PEImage) -> list[int]:
     matches = []
     for start in pe.fn_starts:
         raw = pe.rva_to_raw(start)
-        if raw < 0 or pe.data[raw:raw + 6] != b"\x56\x57\x53\x48\x81\xec":
+        if raw < 0 or pe.data[raw:raw + 10] != b"\x41\x57\x41\x56\x56\x57\x53\x48\x81\xec":
             continue
         insns = pe.disasm(pe.va_from_rva(start), 0x100)
         if len(insns) < len(wanted):
@@ -244,23 +248,24 @@ def find_loadstart_by_relaxed_signature(pe: PEImage) -> list[tuple[int, int]]:
     matches = []
     for start, end in pe.fn_ranges:
         raw = pe.rva_to_raw(start)
-        if raw < 0 or pe.data[raw:raw + 3] != b"\x56\x57\x53":
+        if raw < 0 or pe.data[raw:raw + 4] != b"\x41\x57\x41\x56":
             continue
         insns = pe.disasm(pe.va_from_rva(start), min(end - start, 0x300))
         text = [(insn.mnemonic, insn.op_str) for insn in insns[:40]]
         score = 0
-        score += 2 if any(m == "sub" and re.fullmatch(r"rsp, 0x[0-9a-f]+", o) for m, o in text[:5]) else 0
-        score += 2 if any(m == "cmp" and re.fullmatch(r"dword ptr \[rip \+ 0x[0-9a-f]+\], 2", o) for m, o in text[:12]) else 0
-        score += 2 if any(m == "cmp" and re.fullmatch(r"qword ptr \[rip \+ 0x[0-9a-f]+\], 0", o) for m, o in text[:14]) else 0
-        score += 2 if any(m == "mov" and o == "rdi, rcx" for m, o in text[:18]) else 0
-        score += 1 if any(m == "mov" and o == "r9d, 2" for m, o in text[:24]) else 0
-        score += 1 if any(m == "mov" and o == "r8d, 1" for m, o in text[:32]) else 0
-        score += 2 if any(m == "mov" and re.fullmatch(r"rsi, rax", o) for m, o in text[:36]) else 0
+        score += 2 if any(m == "sub" and re.fullmatch(r"rsp, 0x[0-9a-f]+", o) for m, o in text[:6]) else 0
+        score += 2 if any(m == "mov" and o == "ebx, edx" for m, o in text[:8]) else 0
+        score += 2 if any(m == "mov" and o == "rsi, rcx" for m, o in text[:10]) else 0
+        score += 2 if any(m == "cmp" and re.fullmatch(r"dword ptr \[rip \+ 0x[0-9a-f]+\], 2", o) for m, o in text[:14]) else 0
+        score += 2 if any(m == "cmp" and re.fullmatch(r"qword ptr \[rip \+ 0x[0-9a-f]+\], 0", o) for m, o in text[:16]) else 0
+        score += 1 if any(m == "mov" and o == "r9d, 2" for m, o in text[:26]) else 0
+        score += 1 if any(m == "mov" and o == "r8d, 1" for m, o in text[:34]) else 0
+        score += 2 if any(m == "mov" and o == "rdi, rax" for m, o in text[:38]) else 0
         score += 2 if any(
-            m == "mov" and re.fullmatch(r"rax, qword ptr \[rdi \+ 0x[0-9a-f]+\]", o)
-            for m, o in text[:80]
+            m == "mov" and re.fullmatch(r"rax, qword ptr \[rsi \+ 0x[0-9a-f]+\]", o)
+            for m, o in text[:90]
         ) else 0
-        if score >= 8:
+        if score >= 10:
             matches.append((score, start))
     return sorted(matches, key=lambda item: (-item[0], item[1]))
 

@@ -1,36 +1,43 @@
+const getPlatform = () => {
+    // retval: "windows" | "linux" | "darwin"
+    return Process.platform;
+}
+
 const getMainModule = (version) => {
-    if (version >= 13331) {
-        return Process.findModuleByName("flue.dll");
+    const osPlatform = getPlatform();
+    if (osPlatform === 'windows') {
+        if (version >= 13331) {
+            return Process.findModuleByName("flue.dll");
+        }
+        return Process.findModuleByName("WeChatAppEx.exe");
+    } else if (osPlatform === 'linux') {
+        return Process.findModuleByName("WeChatAppEx");
+    } else if (osPlatform === 'darwin') {
+        return Process.findModuleByName("WeChatAppEx Framework");
     }
-    return Process.findModuleByName("WeChatAppEx.exe");
 };
 
 const patchCDPFilter = (base, config) => {
     // xref: SendToClientFilter OR devtools_message_filter_applet_webview.cc
     const offset = config.CDPFilterHookOffset;
     Interceptor.attach(base.add(offset), {
-        onEnter(args) {
-            send(
-                `[patch] CDP filter on enter, original value of input: ${args[0].readPointer()}`,
-            );
-            this.inputValue = args[0];
-        },
-        onLeave(retval) {
-            const inputValue = this.inputValue.readPointer();
-            if (inputValue.isNull() || inputValue.add(8).isNull()) {
-                // there's a chance the value could be null
-                // return here to avoid crash
-                return;
+        onLeave(retval_) {
+            // see https://github.com/evi0s/WMPFDebugger/pull/262
+            const retval = getPlatform() == 'windows'
+                ? retval_.readPointer()
+                : retval_;
+            if (retval.isNull()) return;
+            try {
+                const val = retval.add(8).readU32();
+                send(`[patch] CDP filter on leave, retval+8 = ${val}`);
+                if (val === 6) {
+                    retval.add(8).writeU32(0x0);
+                    send("[patch] CDP filter patched");
+                }
+            } catch (e) {
+                send(`[patch] CDP filter error: ${e}`);
             }
-
-            send(
-                `[patch] CDP filter on leave, patch input, now value: ${inputValue}; ` +
-                    `*(input + 8) = ${inputValue.add(8).readU32()}`,
-            );
-            if (inputValue.add(8).readU32() == 6) {
-                inputValue.add(8).writeU32(0x0);
-            }
-        },
+        }
     });
 };
 
@@ -53,8 +60,11 @@ const hookOnLoadScene = (a1, sceneOffsets) => {
     // 1000: from issue #83 <-- will crash the process
     // 1007: from issue #80
     // 1008: from issue #53
+    // 1011: scan QR code
+    // 1012: recognize QR code from long-pressed image (issue #128)
     // 1027: from issue #78
     // 1035: from issue #78
+    // 1037: opened from another mini program
     // 1053: from issue #25
     // 1074: from issue #32
     // 1145: from search
@@ -64,8 +74,8 @@ const hookOnLoadScene = (a1, sceneOffsets) => {
     // 1302: from services
     // 1308: minigame?
     const sceneNumberArray = [
-        1005, 1007, 1008, 1027, 1035, 1053, 1074, 1145, 1178, 1256, 1260, 1302,
-        1308,
+        1005, 1007, 1008, 1011, 1012, 1027, 1035, 1037, 1053, 1074, 1145, 1178,
+        1256, 1260, 1302, 1308,
     ];
     if (!sceneNumberArray.includes(miniappScenePtr.readInt())) {
         return;
@@ -85,14 +95,14 @@ const patchOnLoadStart = (base, config) => {
         onEnter(args) {
             send(
                 `[inteceptor] AppletIndexContainer::OnLoadStart onEnter, ` +
-                    `indexContainer.this: ${this.context.rcx}`,
+                    `indexContainer.this: ${args[0]}`,
             );
-            // write dl to 0x1
-            if ((this.context.rdx & 0xff) !== 1) {
-                this.context.rdx = (this.context.rdx & ~0xff) | 0x1;
+            // write debug_flag to 0x1
+            if (args[1].and(0xff).toInt32() !== 1) {
+                args[1] = args[1].and(ptr("0xffffffffffffff00")).or(1);
             }
             // handle onLoad scene
-            hookOnLoadScene(this.context.rcx, config.SceneOffsets);
+            hookOnLoadScene(args[0], config.SceneOffsets);
         },
         onLeave(retval) {
             // do nothing

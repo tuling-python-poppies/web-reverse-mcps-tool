@@ -51,7 +51,6 @@ class MiniappCDPMCP:
         page_idx: int = 0,
         resource_types: list[str] | None = None,
         url_filter: str | None = None,
-        include_preserved_requests: bool = False,
         wait_ms: int = 0,
         clear_existing: bool = False,
     ) -> str:
@@ -63,7 +62,6 @@ class MiniappCDPMCP:
             page_idx=page_idx,
             resource_types=resource_types,
             url_filter=url_filter,
-            include_preserved_requests=include_preserved_requests,
             wait_ms=wait_ms,
             clear_existing=clear_existing,
         )

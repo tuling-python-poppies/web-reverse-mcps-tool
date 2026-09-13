@@ -94,7 +94,6 @@ class NetworkCaptureService:
         page_idx: int = 0,
         resource_types: list[str] | None = None,
         url_filter: str | None = None,
-        include_preserved_requests: bool = False,
     ) -> dict[str, Any]:
         if self.collector is None:
             return {
@@ -114,7 +113,7 @@ class NetworkCaptureService:
 
     def clear_requests(self) -> None:
         if self.collector is not None:
-            self.collector.clear()
+            self.collector.clear_requests()
 
     async def get_response_body(
         self, request_id: str, session_id: str | None = None

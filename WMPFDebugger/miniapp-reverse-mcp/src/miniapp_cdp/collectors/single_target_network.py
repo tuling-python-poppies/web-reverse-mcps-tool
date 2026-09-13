@@ -366,13 +366,13 @@ class SingleTargetNetworkCollector:
         request_id = event.get("requestId")
         if not request_id:
             return
+        # Only mark requests that were already tracked (XHR/Fetch). Resources
+        # filtered out in on_request (images, fonts, ...) must not create new
+        # records here, otherwise list_requests shows phantom entries with no
+        # URL/method/resource type.
         record = self.records.get(request_id)
         if record is None:
-            record = RequestRecord(request_id=request_id, session_id=self.session_id)
-            if len(self.request_order) == self.request_order.maxlen:
-                self.records.pop(self.request_order[0], None)
-            self.request_order.append(request_id)
-            self.records[request_id] = record
+            return
         record.loading_failed = True
         record.failure = {
             "errorText": event.get("errorText"),
@@ -467,9 +467,12 @@ class SingleTargetNetworkCollector:
             results.append(script)
         return results
 
-    def clear(self) -> None:
+    def clear_requests(self) -> None:
         self.records.clear()
         self.request_order.clear()
+
+    def clear(self) -> None:
+        self.clear_requests()
         self.scripts.clear()
 
     def list_requests(
@@ -513,11 +516,6 @@ class SingleTargetNetworkCollector:
         if self.client is None or self.session_id is None:
             raise RuntimeError("Collector not started")
         record = self.records.get(request_id)
-        if record is not None and not record.loading_finished:
-            raise RuntimeError(
-                f"Request {request_id} has not finished loading yet. "
-                "Wait for the response to complete or re-trigger the action."
-            )
         try:
             result = await self.client.send.Network.getResponseBody(
                 params={"requestId": request_id},
@@ -526,6 +524,11 @@ class SingleTargetNetworkCollector:
         except RuntimeError as e:
             error_msg = str(e)
             if "No resource with given identifier" in error_msg or "No data found" in error_msg:
+                if record is not None and not record.loading_finished and not record.loading_failed:
+                    raise RuntimeError(
+                        f"Response body for request {request_id} is not available yet. "
+                        "The request may still be loading; wait for it to complete or re-trigger the action."
+                    ) from e
                 raise RuntimeError(
                     f"Response body for request {request_id} is no longer available. "
                     "The browser may have garbage-collected it. Re-trigger the request to capture it fresh."
@@ -542,11 +545,22 @@ class SingleTargetNetworkCollector:
     async def get_request_post_data(self, request_id: str) -> dict[str, Any]:
         if self.client is None or self.session_id is None:
             raise RuntimeError("Collector not started")
-        result = await self.client.send.Network.getRequestPostData(
-            params={"requestId": request_id},
-            session_id=self.session_id,
-        )
-        return {"requestId": request_id, "postData": result.get("postData", "")}
+        record = self.records.get(request_id)
+        try:
+            result = await self.client.send.Network.getRequestPostData(
+                params={"requestId": request_id},
+                session_id=self.session_id,
+            )
+        except RuntimeError:
+            # Fall back to the post data captured from requestWillBeSent when
+            # the CDP lookup is unavailable (runtime unsupported / data GC'd).
+            if record is not None and record.post_data is not None:
+                return {"requestId": request_id, "postData": record.post_data}
+            raise
+        post_data = result.get("postData", "")
+        if not post_data and record is not None and record.post_data:
+            post_data = record.post_data
+        return {"requestId": request_id, "postData": post_data}
 
     async def get_script_source(self, script_id: str) -> dict[str, Any]:
         if self.client is None or self.session_id is None:

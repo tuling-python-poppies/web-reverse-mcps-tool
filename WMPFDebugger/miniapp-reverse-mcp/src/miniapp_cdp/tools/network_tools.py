@@ -11,7 +11,12 @@ def format_requests_markdown(data: dict) -> str:
         req = data["request"]
         md.append(f"## Request {req.get('url')}")
         status = req.get('status')
-        status_text = f"[success - {status}]" if status else "[failed]" if req.get('loading_finished') else "[pending]"
+        if status:
+            status_text = f"[success - {status}]"
+        elif req.get('loading_failed'):
+            status_text = "[failed]"
+        else:
+            status_text = "[pending]"
         md.append(f"Status: {status_text}")
         md.append(f"Method: {req.get('method')}")
         md.append(f"Type: {req.get('resource_type')}")
@@ -65,13 +70,16 @@ def format_requests_markdown(data: dict) -> str:
     
     start_idx = page_idx * page_size
     end_idx = min(start_idx + page_size, total)
-    total_pages = (total + page_size - 1) // page_size if page_size else 1
-    
-    md.append(f"Showing {start_idx + 1}-{end_idx} of {total} (Page {page_idx + 1} of {total_pages}).")
-    if page_idx + 1 < total_pages:
-        md.append(f"Next page: {page_idx + 1}")
-    if page_idx > 0:
-        md.append(f"Previous page: {page_idx - 1}")
+    total_pages = max(1, (total + page_size - 1) // page_size) if page_size else 1
+
+    if total == 0:
+        md.append("Showing 0 of 0.")
+    else:
+        md.append(f"Showing {start_idx + 1}-{end_idx} of {total} (Page {page_idx + 1} of {total_pages}).")
+        if page_idx + 1 < total_pages:
+            md.append(f"Next page: {page_idx + 1}")
+        if page_idx > 0:
+            md.append(f"Previous page: {page_idx - 1}")
         
     md.append("\n## Network requests")
     if not reqs:
@@ -94,7 +102,6 @@ async def list_network_requests(
     page_idx: int = 0,
     resource_types: list[str] | None = None,
     url_filter: str | None = None,
-    include_preserved_requests: bool = False,
     wait_ms: int = 0,
     clear_existing: bool = False,
 ) -> str:

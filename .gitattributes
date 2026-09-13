@@ -1,0 +1,27 @@
+# Keep line endings consistent everywhere: text files are stored and
+# checked out with LF. This prevents CRLF/LF churn when syncing files
+# between Windows checkouts and other copies of the projects.
+* text=auto eol=lf
+
+# Binary files: never touch line endings.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.bmp binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.gz binary
+*.7z binary
+*.rar binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.node binary
+*.wasm binary

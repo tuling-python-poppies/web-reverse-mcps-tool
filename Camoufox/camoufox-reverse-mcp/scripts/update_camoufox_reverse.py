@@ -346,7 +346,8 @@ def read_installation_id(browser_root: Path) -> str:
 
 def parse_release_tag(tag: str) -> tuple[str, str]:
     value = tag.removeprefix("v")
-    match = re.fullmatch(r"(.+)-((?:alpha|beta)\.\d+)", value)
+    # New releases append a reverse build suffix (e.g. v152.0.4-beta.30-reverse.5).
+    match = re.fullmatch(r"(.+)-((?:alpha|beta)\.\d+)(?:-reverse\.\d+)?", value)
     if not match:
         raise UpdateError(f"无法解析发布版本标签: {tag}")
     return match.group(1), match.group(2)
@@ -450,12 +451,22 @@ def fetch_release(
         (item for item in payload.get("assets", []) if item.get("name") == ASSET_NAME),
         None,
     )
+    asset_name = ASSET_NAME
     if asset is None:
-        raise UpdateError(f"发布 {release_tag} 不包含 Windows x86_64 资产 {ASSET_NAME}")
+        # Newer releases use a versioned asset name (camoufox-<ver>-<rel>-win.x86_64.zip).
+        asset_name = f"camoufox-{version}-{release}-win.x86_64.zip"
+        asset = next(
+            (item for item in payload.get("assets", []) if item.get("name") == asset_name),
+            None,
+        )
+    if asset is None:
+        raise UpdateError(
+            f"发布 {release_tag} 不包含 Windows x86_64 资产 {ASSET_NAME} 或 {asset_name}"
+        )
 
     digest = str(asset.get("digest") or "")
     if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
-        raise UpdateError(f"发布资产缺少可信 SHA-256: {ASSET_NAME}")
+        raise UpdateError(f"发布资产缺少可信 SHA-256: {asset_name}")
     size = int(asset.get("size") or 0)
     if size <= 0 or size > MAX_ARCHIVE_BYTES:
         raise UpdateError(f"发布资产大小异常: {size} bytes")

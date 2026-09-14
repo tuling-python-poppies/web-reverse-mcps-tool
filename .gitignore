@@ -36,3 +36,6 @@ browser-connection/
 Thumbs.db
 .idea/
 .vscode/
+
+# miniapp runtime state (PIDs/leases), regenerated on start
+WMPFDebugger/miniapp-reverse-mcp/config/wmpf-debugger-state.json

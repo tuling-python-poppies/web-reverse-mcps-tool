@@ -1,0 +1,9 @@
+{
+  "name": "acorn",
+  "version": "8.15.0",
+  "license": "MIT",
+  "source": "https://github.com/acornjs/acorn/tree/6dc537416ad628b3959b3ff963fbdcfdb380e0a3",
+  "npm_integrity": "sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==",
+  "sha256": "fdb08546776ec6228b03e8d02b40d4ab3255bae5f401adba7ff5dad927ac5c9c",
+  "commit": "6dc537416ad628b3959b3ff963fbdcfdb380e0a3"
+}

@@ -1,0 +1,50 @@
+# 模块说明: 注册 FastMCP 服务与全部工具模块,并持有全局 browser_manager。
+from mcp.server.fastmcp import FastMCP
+from .browser import BrowserManager
+from .schema_compat import normalize_tool_schemas
+
+
+class SchemaCompatibleFastMCP(FastMCP):
+    """FastMCP server that normalizes advertised schemas before every listing."""
+
+    async def list_tools(self):
+        # Re-run here so tools registered after module import receive the same
+        # compatibility treatment. The rewrite is intentionally idempotent.
+        normalize_tool_schemas(self)
+        return await super().list_tools()
+
+
+mcp = SchemaCompatibleFastMCP(
+    "camoufox-reverse-mcp",
+    instructions="Anti-detection browser MCP server for JavaScript reverse engineering. "
+    "Uses Camoufox (C++ engine-level fingerprint spoofing) to bypass bot detection "
+    "while performing JS analysis, debugging, hooking, network interception, "
+    "and JSVMP bytecode analysis."
+)
+
+# FastMCP otherwise advertises the SDK package version in initialize.serverInfo.
+# Report this application's version consistently with check_environment.
+from . import __version__
+mcp._mcp_server.version = __version__
+
+browser_manager = BrowserManager()
+
+# v1.0.0: pure JS reverse-engineering toolkit (session/assertions removed)
+from .tools import navigation      # noqa: E402, F401  — browser control + page interaction
+from .tools import script_analysis  # noqa: E402, F401  — scripts() + search_code()
+from .tools import debugging        # noqa: E402, F401  — evaluate_js
+from .tools import hooking          # noqa: E402, F401  — hook_function + get_trace_data + hook lifecycle
+from .tools import network          # noqa: E402, F401  — network_capture + list/get requests
+from .tools import storage          # noqa: E402, F401  — cookies() + get_storage + export/import state
+from .tools import cookie_analysis  # noqa: E402, F401  — analyze_cookie_sources
+from .tools import jsvmp            # noqa: E402, F401  — hook_jsvmp_interpreter + compare_env
+from .tools import fingerprint      # noqa: E402, F401  — export_fingerprint_profile
+from .tools import instrumentation  # noqa: E402, F401  — instrumentation(action=...)
+from .tools import environment      # noqa: E402, F401  — check_environment
+from .tools import browser_update   # noqa: E402, F401  — check/update browser binary
+from .tools import verification     # noqa: E402, F401  — verify_signer_offline
+from .tools import trace            # noqa: E402, F401  — trace_property_access + list/query
+
+# Normalize eagerly for code that inspects FastMCP's manager directly. The
+# list_tools override also covers tools registered later at runtime.
+normalize_tool_schemas(mcp)

@@ -326,10 +326,17 @@ function Test-SameProcessStartTicks {
 
 function Get-ListenerProcessIds {
   param([int]$Port)
-  try {
-    $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
-  } catch {
-    Write-Failure "Unable to enumerate TCP listeners while checking port $Port." 4
+  $listeners = @()
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+      $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
+      break
+    } catch {
+      if ($attempt -ge 3) {
+        Write-Failure "Unable to enumerate TCP listeners while checking port $Port after $attempt attempts: $($_.Exception.Message)" 4
+      }
+      Start-Sleep -Milliseconds 200
+    }
   }
   return @(
     $listeners |
@@ -356,7 +363,16 @@ function Test-IsDescendantProcess {
     }
     if ($currentId -le 0 -or $seen.ContainsKey($currentId)) { return $false }
     $seen[$currentId] = $true
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $currentId" -ErrorAction SilentlyContinue
+    $process = $null
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+      try {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $currentId" -ErrorAction SilentlyContinue
+        break
+      } catch {
+        if ($attempt -ge 2) { return $false }
+        Start-Sleep -Milliseconds 150
+      }
+    }
     if ($null -eq $process) { return $false }
     $parentId = [int]$process.ParentProcessId
     $parentTicks = Get-ProcessStartTicks $parentId
@@ -402,9 +418,22 @@ function Test-WmpfNodeIdentity {
   }
 }
 
+function Get-CimProcessSnapshot {
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+      return @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    } catch {
+      if ($attempt -ge 3) {
+        throw "Unable to enumerate processes via CIM after $attempt attempts: $($_.Exception.Message)"
+      }
+      Start-Sleep -Milliseconds 200
+    }
+  }
+}
+
 function Get-ManagedDescendantIdentities {
   param($State, [object[]]$KnownIdentities = @())
-  $snapshot = @(Get-CimInstance Win32_Process)
+  $snapshot = @(Get-CimProcessSnapshot)
   $childrenByParent = @{}
   foreach ($process in $snapshot) {
     $parentKey = [string][int]$process.ParentProcessId
@@ -466,14 +495,25 @@ function Stop-ExactProcess {
   param($Identity)
   $process = Get-Process -Id ([int]$Identity.Id) -ErrorAction SilentlyContinue
   if ($null -eq $process) { return $true }
-  if ($process.StartTime.ToUniversalTime().Ticks -ne [long]$Identity.StartTicks) {
+  $startTicks = $null
+  try {
+    $startTicks = $process.StartTime.ToUniversalTime().Ticks
+  } catch {
+    $stillAlive = Get-Process -Id ([int]$Identity.Id) -ErrorAction SilentlyContinue
+    return ($null -eq $stillAlive)
+  }
+  if ($null -eq $startTicks -or $startTicks -ne [long]$Identity.StartTicks) {
     return $false
   }
-  Stop-Process -InputObject $process -Force
+  Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue
   try {
     $process.WaitForExit(2000) | Out-Null
   } catch {}
-  return $process.HasExited
+  try {
+    return $process.HasExited
+  } catch {
+    return $false
+  }
 }
 
 function Stop-ManagedProcessTree {
@@ -875,5 +915,21 @@ try {
   Write-Output "Stopped managed WMPFDebugger launcher PID $($state.launcherPid) and its process tree."
   exit 0
 } catch {
-  Write-Failure $_.Exception.Message 1
+  [Console]::Error.WriteLine("WMPFDebugger lifecycle failure: $($_.Exception.Message)")
+  [Console]::Error.WriteLine("Type: $($_.Exception.GetType().FullName); Line: $($_.InvocationInfo.ScriptLineNumber); Command: $($_.InvocationInfo.MyCommand)")
+  [Console]::Error.WriteLine("Stack: $($_.ScriptStackTrace)")
+  try {
+    if ($Action -eq 'Stop' -and $null -ne $state) {
+      $presence = Get-RecordedProcessPresence $state
+      $descendants = @(Get-ManagedDescendantIdentities $state)
+      $liveListeners = @(Get-AllListenerProcessIds)
+      if ($presence -eq 'missing' -and $descendants.Count -eq 0 -and $liveListeners.Count -eq 0) {
+        Remove-ManagedState
+        [Console]::Error.WriteLine('Recovered: removed stale managed state; no managed process remains.')
+      }
+    }
+  } catch {
+    [Console]::Error.WriteLine("Post-failure recovery check failed: $($_.Exception.Message)")
+  }
+  exit 1
 }

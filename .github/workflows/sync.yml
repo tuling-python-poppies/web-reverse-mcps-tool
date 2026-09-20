@@ -29,7 +29,7 @@ jobs:
           git show "HEAD:.github/workflows/sync.yml" > /tmp/sync.yml
           git remote add gitee https://gitee.com/tuling-python/web-reverse-mcps-tool.git
           git fetch --no-tags gitee main
-          if [ "$(git rev-parse FETCH_HEAD)" = "$(git rev-parse HEAD^ 2>/dev/null || echo none)" ]; then
+          if git merge-base --is-ancestor FETCH_HEAD HEAD; then
             echo "Gitee branch is already mirrored"
             exit 0
           fi
